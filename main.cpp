@@ -18,7 +18,7 @@
 
 #define SPLIT_COLS 3
 #define SPLIT_ROWS 2
-#define NUM_NOISE_FRAMES 9 // must be odd
+#define NUM_NOISE_FRAMES 11 // must be odd
 
 using namespace std;
 
@@ -127,7 +127,7 @@ int cvHandler()
             cout<<"denoise "<<frameVectorSize<<" ";
             //  fastNlMeansDenoisingMulti( input array, output, index of image to filter, (n) images to process, filter strength, windowSize, searchWindowSize)
             //  NOTE: time complexity is O(searchWindowSize) + O(n)
-            cv::fastNlMeansDenoisingMulti(rawFrames, filteredFrame, frameVectorSize/2, frameVectorSize, 15, 7, 11);
+            cv::fastNlMeansDenoisingMulti(rawFrames, filteredFrame, frameVectorSize/2, frameVectorSize, 20, 7, 11);
         }
         else
         {
