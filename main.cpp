@@ -1,3 +1,13 @@
+/*
+    Head tracking using webcam and colored blobs
+    Interface with Virtual Joystick
+
+    Created by Calvin Ng, October 2020
+    Released under MIT License
+
+    Uses OpenCV
+    License: https://opencv.org/license/
+*/
 #include<opencv2/opencv.hpp>
 #include<iostream>
 #include<vector>
@@ -8,7 +18,7 @@
 
 #define SPLIT_COLS 3
 #define SPLIT_ROWS 2
-#define NUM_NOISE_FRAMES 2
+#define NUM_NOISE_FRAMES 9 // must be odd
 
 using namespace std;
 
@@ -40,10 +50,10 @@ int cvHandler()
 
     vector<cv::Mat> hsvChannels;
 
-    cv::Mat rawFrames[NUM_NOISE_FRAMES];
+    vector<cv::Mat> rawFrames;
 
     cv::Mat rgbFrame, hsvFrame, colorFrame;
-    cv::Mat hues, saturations, values, newFrame, lastFrame, unfilteredFrame;
+    cv::Mat hues, saturations, values, newFrame, filteredFrame;
 
     int saturation;
     int lowerThreshold, upperThreshold;
@@ -57,8 +67,8 @@ int cvHandler()
         return 1;
     }
 
-    camera.set(cv::CAP_PROP_FRAME_HEIGHT, 240);
-    camera.set(cv::CAP_PROP_FRAME_WIDTH, 320);
+    camera.set(cv::CAP_PROP_FRAME_HEIGHT, 120);
+    camera.set(cv::CAP_PROP_FRAME_WIDTH, 160);
 
     global_frame_height = camera.get(cv::CAP_PROP_FRAME_HEIGHT);
     global_frame_width = camera.get(cv::CAP_PROP_FRAME_WIDTH);
@@ -82,85 +92,53 @@ int cvHandler()
 //            camera>>rgbFrame;
 //            rawFrames.push_back(rgbFrame);
 //        }
+        camera>>colorFrame;
 
-        for(int i = 0; i < NUM_NOISE_FRAMES; i++)
+        cv::Rect cropRect(0, global_frame_height/2, global_frame_width, global_frame_height/2);
+
+        colorFrame = colorFrame(cropRect);
+
+        cv::cvtColor(colorFrame, hsvFrame, cv::COLOR_BGR2HSV);
+        cv::split(hsvFrame, hsvChannels);
+        hues = hsvChannels[0];
+        saturations = hsvChannels[1];
+        values = hsvChannels[2];
+
+        int frameVectorSize = (int) rawFrames.size();
+        if(frameVectorSize >= NUM_NOISE_FRAMES)
         {
-            camera>>colorFrame;
-
-            cv::Rect cropRect(0, 120, 320, 120);
-
-            colorFrame = colorFrame(cropRect);
-
-            cout<<"cropped";
-
-
-            rawFrames[i] = colorFrame.clone();
-
-
-            cv::cvtColor(rawFrames[i], hsvFrame, cv::COLOR_BGR2HSV);
-            cv::split(hsvFrame, hsvChannels);
-            hues = hsvChannels[0];
-            saturations = hsvChannels[1];
-            values = hsvChannels[2];
-
-            /* threshold types:
-            0: binary
-            1: binary inverted
-            2: threshold truncate
-            3: threshold to zero
-            4: threshold to zero inverted
-            */
-
-            mtx.lock();
-            lowerThreshold = global_threshold_lower;
-            upperThreshold = global_threshold_upper;
-            mtx.unlock();
-
-            //cv::fastNlMeansDenoising(hues, hues, 15, 3, 5);
-
-            cv::threshold(hues, rawFrames[i], lowerThreshold, 255, 3);
-            cv::threshold(rawFrames[i], rawFrames[i], upperThreshold, 255, 4); //obtain only pixels in between the bounds, and change to binary values
-            cv::threshold(rawFrames[i], rawFrames[i], 1, 255, 0);
+            rawFrames.pop_back();
         }
+        rawFrames.emplace(rawFrames.begin(), hues.clone());
 
-        if(NUM_NOISE_FRAMES > 1)
+        if(frameVectorSize >= 3 && frameVectorSize%2 != 0)
         {
-            cv::bitwise_and(rawFrames[0], rawFrames[1], newFrame);
-            for(int i = 1; i < NUM_NOISE_FRAMES - 1; i++)
-            {
-                cv::bitwise_and(newFrame, rawFrames[i], newFrame);
-            }
+            cout<<"denoise "<<frameVectorSize<<" ";
+            //  fastNlMeansDenoisingMulti( input array, output, index of image to filter, (n) images to process, filter strength, windowSize, searchWindowSize)
+            //  NOTE: time complexity is O(searchWindowSize) + O(n)
+            cv::fastNlMeansDenoisingMulti(rawFrames, filteredFrame, frameVectorSize/2, frameVectorSize, 15, 7, 11);
         }
         else
         {
-            newFrame = rawFrames[0];
+            filteredFrame = rawFrames[0];
         }
 
-        //cv::fastNlMeansDenoisingColoredMulti(rgbFrame, rgbFrame, 4, 4, 5, 15);
+        /* threshold types:
+        0: binary
+        1: binary inverted
+        2: threshold truncate
+        3: threshold to zero
+        4: threshold to zero inverted
+        */
 
-//        camera>>rgbFrame;
-//        cv::cvtColor(rgbFrame, hsvFrame, cv::COLOR_BGR2HSV);
-//        cv::split(hsvFrame, hsvChannels);
-//        hues = hsvChannels[0];
-//        saturations = hsvChannels[1];
-//        values = hsvChannels[2];
-//
-//        /* threshold types:
-//        0: binary
-//        1: binary inverted
-//        2: threshold truncate
-//        3: threshold to zero
-//        4: threshold to zero inverted
-//        */
-//
-//        mtx.lock();
-//        lowerThreshold = global_threshold_lower;
-//        upperThreshold = global_threshold_upper;
-//        mtx.unlock();
-//
-//        cv::threshold(hues, newFrame, lowerThreshold, 255, 3);
-//        cv::threshold(newFrame, newFrame, upperThreshold, 255, 4); //obtain only pixels in between the bounds, and change to binary values
-//        cv::threshold(newFrame, newFrame, 1, 255, 0);
+        mtx.lock();
+        lowerThreshold = global_threshold_lower;
+        upperThreshold = global_threshold_upper;
+        mtx.unlock();
+
+        cv::threshold(filteredFrame, newFrame, lowerThreshold, 255, 3);
+        cv::threshold(newFrame, newFrame, upperThreshold, 255, 4); //obtain only pixels in between the bounds, and change to binary values
+        cv::threshold(newFrame, newFrame, 1, 255, 0);
 
         cv::circle(hues, coords, 5, cv::Scalar(255, 0, 0));
 
@@ -169,12 +147,10 @@ int cvHandler()
         cout<<saturation<<", ";
 
         cv::imshow("Hue", hues);
-        cv::imshow("Saturation", saturations);
-        //if(!lastFrame.empty())
+        cv::imshow("Filtered", filteredFrame);
         cv::imshow("Color", colorFrame);
         cv::imshow("Process", newFrame);
 
-        lastFrame = newFrame.clone();
 
         // wait (5ms) for a key to be pressed
         if (cv::waitKey(5) >= 0)
