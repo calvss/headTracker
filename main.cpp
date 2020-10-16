@@ -75,9 +75,9 @@ int cvHandler()
 
     auto startTime = chrono::system_clock::now();
 
-    //  these 2 vectors have to persist between iterations
+    //  this vector has to persist between iterations
     vector<cv::Mat> rawFrames;
-    vector<cv::Point> targets;
+
     while (1)
     {
         //  capture an image and crop
@@ -159,7 +159,7 @@ int cvHandler()
 
         //  detect the contours
         vector<vector<cv::Point>> contours;
-        cv::findContours(newFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_TC89_L1);
+        cv::findContours(newFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_NONE);
 
         // iterate over the list of contours to find the 2 biggest areas
         vector<vector<cv::Point>> biggestContours;
@@ -191,12 +191,56 @@ int cvHandler()
                     biggestContours.pop_back();
                 }
             }
+            cout<<biggestContours.size()<<"size";
+        }
+        else
+        {
+            cout<<"no contours";
         }
 
+        //  find the inscribed circles of the contours (https://stackoverflow.com/a/53648903/10835281)
+        //      1. generate filled contour masks
+        cv::Mat mask1(newFrame.size(), CV_8UC1, cv::Scalar(0)); //  uint8, 1 channel, image full of zeroes (black)
+        cv::drawContours(mask1, biggestContours, 0, cv::Scalar(255), cv::FILLED);
+
+        cv::Mat mask2(newFrame.size(), CV_8UC1, cv::Scalar(0)); //  uint8, 1 channel, image full of zeroes (black)
+        cv::drawContours(mask2, biggestContours, 1, cv::Scalar(255), cv::FILLED);
+
+        //      2. distance transforms
+        cv::Mat dt1;
+        cv::distanceTransform(mask1, dt1, cv::DIST_L2, 5, cv::DIST_LABEL_PIXEL);
+
+        cv::Mat dt2;
+        cv::distanceTransform(mask2, dt2, cv::DIST_L2, 5, cv::DIST_LABEL_PIXEL);
+
+        //      3. max values of the distance transform
+        //          the inscribed circle is at the position of max_loc with radius max_val
+        double max_val1;
+        cv::Point max_loc1;
+        cv::minMaxLoc(dt1, nullptr, &max_val1, nullptr, &max_loc1);
+
+        double max_val2;
+        cv::Point max_loc2;
+        cv::minMaxLoc(dt2, nullptr, &max_val2, nullptr, &max_loc2);
+
+        //  compute the centroids using image moments
+        cv::Moments moment1 = cv::moments(biggestContours[0]);
+        cv::Moments moment2 = cv::moments(biggestContours[1]);
+
+        cv::Point centroid1((moment1.m10 / (moment1.m00 + 1e-5)), (moment1.m01 / (moment1.m00 + 1e-5))); //have to add 1e-5 to prevent divide by 0
+        cv::Point centroid2((moment2.m10 / (moment2.m00 + 1e-5)), (moment2.m01 / (moment2.m00 + 1e-5))); //have to add 1e-5 to prevent divide by 0
+
         //  generate a color image to draw the contour outlines
-        cv::Mat frameWithContours(newFrame.size(), CV_8UC3);
+        cv::Mat frameWithContours(newFrame.size(), CV_8UC3); //  uint8, 3 channels
         cv::cvtColor(newFrame, frameWithContours, cv::COLOR_GRAY2BGR);
         cv::drawContours(frameWithContours, biggestContours, -1, cv::Scalar(255, 0, 0));
+
+        //  draw the inscribed circles
+        cv::circle(frameWithContours, max_loc1, max_val1, cv::Scalar(0, 255, 0));
+        cv::circle(frameWithContours, max_loc2, max_val2, cv::Scalar(0, 0, 255));
+
+        //  draw the line connecting the centroids
+        cv::line(frameWithContours, centroid1, centroid2, cv::Scalar(255, 255, 255));
 
         //  draw a circle at mouse cursor
         cv::circle(hueFrame, mouseCoords, 5, cv::Scalar(255, 0, 0));
@@ -214,7 +258,7 @@ int cvHandler()
         //  preview windows
         cv::imshow("Hue", hueFrame);
         cv::imshow("Filtered", filteredFrame);
-        cv::imshow("Color", colorFrame);
+        cv::imshow("Color", mask1);
         cv::imshow("Process", newFrame);
         cv::imshow("Keypoints", frameWithContours);
 
