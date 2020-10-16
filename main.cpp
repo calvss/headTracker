@@ -15,9 +15,8 @@
 #include<mutex>
 #include<chrono>
 #include<thread>
+#include<cmath>
 
-#define SPLIT_COLS 3
-#define SPLIT_ROWS 2
 #define NUM_NOISE_FRAMES 11 // must be odd
 
 using namespace std;
@@ -26,6 +25,8 @@ mutex mtx;
 volatile int global_threshold_upper = 170;
 volatile int global_threshold_lower = 130;
 volatile int global_blob_size = 15;
+volatile double global_filter_constant = 0.5;
+volatile bool global_exit_flag = false;
 const int global_frame_height = 120;
 const int global_frame_width = 160;
 
@@ -78,7 +79,10 @@ int cvHandler()
     //  this vector has to persist between iterations
     vector<cv::Mat> rawFrames;
 
-    while (1)
+    //  angle of the centroid connecting line in radians, where 0 is pure left
+    double previousAngle = M_PI/2;
+
+    while(!global_exit_flag)
     {
         //  capture an image and crop
         cv::Mat colorFrame;
@@ -230,6 +234,21 @@ int cvHandler()
         cv::Point centroid1((moment1.m10 / (moment1.m00 + 1e-5)), (moment1.m01 / (moment1.m00 + 1e-5))); //have to add 1e-5 to prevent divide by 0
         cv::Point centroid2((moment2.m10 / (moment2.m00 + 1e-5)), (moment2.m01 / (moment2.m00 + 1e-5))); //have to add 1e-5 to prevent divide by 0
 
+        //  for simplicity, centroid1 is always the bottom one
+        if(centroid1.y < centroid2.y)
+        {
+            cv::Point swapCentroid = centroid1;
+            centroid1 = centroid2;
+            centroid2 = swapCentroid;
+        }
+
+        //  calculate the angle of the centroid connecting line
+        double newAngle = atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x);
+
+        //  low pass filter
+        newAngle = ((1. - global_filter_constant) * previousAngle) + (global_filter_constant * (newAngle + previousAngle)/2);
+        previousAngle = newAngle;
+
         //  generate a color image to draw the contour outlines
         cv::Mat frameWithContours(newFrame.size(), CV_8UC3); //  uint8, 3 channels
         cv::cvtColor(newFrame, frameWithContours, cv::COLOR_GRAY2BGR);
@@ -241,6 +260,8 @@ int cvHandler()
 
         //  draw the line connecting the centroids
         cv::line(frameWithContours, centroid1, centroid2, cv::Scalar(255, 255, 255));
+
+        cv::line(frameWithContours, cv::Point(50,0), cv::Point(50*cos(newAngle) + 50, 50*sin(newAngle)), cv::Scalar(255, 255, 255));
 
         //  draw a circle at mouse cursor
         cv::circle(hueFrame, mouseCoords, 5, cv::Scalar(255, 0, 0));
@@ -284,34 +305,43 @@ int main(int argc, char *argv[])
     auto cvThread = async(cvHandler);
 
     char type;
-    int newThreshold;
+    double newThreshold;
 
     while(cvThread.wait_for(chrono::milliseconds(100)) == future_status::timeout)
     {
         cout<<"ready";
-        cin>>type>>newThreshold;
+        cin>>type;
 
-        if(type == 'u')
+        if(type == 'q')
         {
-            mtx.lock();
-            global_threshold_upper = newThreshold;
-            mtx.unlock();
-
-            cout <<"new threshold"<<newThreshold;
+            global_exit_flag = true;
+            return 0;
         }
-        else if(type == 'l')
+        else
         {
-            mtx.lock();
-            global_threshold_lower = newThreshold;
-            mtx.unlock();
+            cin>>newThreshold;
+            switch (type)
+            {
+                case 'u':
+                    mtx.lock();
+                    global_threshold_upper = (int) newThreshold;
+                    mtx.unlock();
 
-            cout <<"new threshold"<<newThreshold;
-        }
-        else if(type == 'b')
-        {
-            mtx.lock();
-            global_blob_size = newThreshold;
-            mtx.unlock();
+                case 'l':
+                    mtx.lock();
+                    global_threshold_lower = (int) newThreshold;
+                    mtx.unlock();
+
+                case 'b':
+                    mtx.lock();
+                    global_blob_size = (int) newThreshold;
+                    mtx.unlock();
+
+                case 'a':
+                    mtx.lock();
+                    global_filter_constant = newThreshold;
+                    mtx.unlock();
+            }
         }
     }
     cout<<"done";
