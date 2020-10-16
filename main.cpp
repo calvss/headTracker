@@ -11,7 +11,6 @@
 #include<opencv2/opencv.hpp>
 #include<iostream>
 #include<vector>
-#include<future>
 #include<mutex>
 #include<chrono>
 #include<thread>
@@ -147,20 +146,6 @@ int cvHandler()
         cv::threshold(newFrame, newFrame, upperThreshold, 255, 4);      //  all pixels with hue above the upper threshold are black
         cv::threshold(newFrame, newFrame, 1, 255, 0);                   //  remaining pixels become pure white
 
-//        //  configure the blob detector
-//        cv::SimpleBlobDetector::Params params;
-//        params.filterByArea = true;
-//
-//        // safely obtain the blob size from another thread using mutex
-//        mtx.lock();
-//        params.minArea = global_blob_size;
-//        mtx.unlock();
-//
-//        params.filterByInertia = false;
-//        params.filterByConvexity = false;
-//        params.filterByCircularity = false;
-//        params.filterByColor = false;
-
         //  detect the contours
         vector<vector<cv::Point>> contours;
         cv::findContours(newFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_NONE);
@@ -294,28 +279,24 @@ int cvHandler()
         {
             break;
         }
-
-        //this_thread::sleep_for(100ms);
     }
     return 0;
 }
 
 int main(int argc, char *argv[])
 {
-    auto cvThread = async(cvHandler);
+    thread cvThread(cvHandler);
 
     char type;
     double newThreshold;
 
-    while(cvThread.wait_for(chrono::milliseconds(100)) == future_status::timeout)
+    while(!global_exit_flag)
     {
-        cout<<"ready";
         cin>>type;
 
         if(type == 'q')
         {
             global_exit_flag = true;
-            return 0;
         }
         else
         {
@@ -344,6 +325,7 @@ int main(int argc, char *argv[])
             }
         }
     }
+    cvThread.join();
     cout<<"done";
     return 0;
 }
