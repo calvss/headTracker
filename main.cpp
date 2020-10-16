@@ -21,7 +21,7 @@
 #include"vjoyinterface.h"
 
 
-#define NUM_NOISE_FRAMES 11 // must be odd
+#define NUM_NOISE_FRAMES 5 // must be odd
 #define VJOYFPS 10
 
 using namespace std;
@@ -30,13 +30,13 @@ mutex mtx;
 volatile int global_threshold_upper = 170;
 volatile int global_threshold_lower = 130;
 volatile int global_blob_size = 15;
-volatile double global_filter_constant = 0.3;
+volatile double global_filter_constant = 0.6;
 volatile double global_head_angle = M_PI/2;
 volatile bool global_exit_flag = false;
 volatile bool global_statistics_flag = false;
-const int global_frame_height = 120;
-const int global_frame_width = 160;
-const uint32_t global_deadzone = 1000;
+const int global_frame_height = 240;
+const int global_frame_width = 320;
+volatile uint32_t global_deadzone = 500;
 
 void mouse_callback(int  event, int  x, int  y, int  flag, void *param)
 {
@@ -295,7 +295,7 @@ int cvHandler()
         // wait (5ms) for a key to be pressed (exit)
         if (cv::waitKey(5) >= 0)
         {
-            break;
+            global_exit_flag = true;
         }
     }
     return 0;
@@ -382,12 +382,13 @@ int vJoyHandler(unsigned int deviceID = 1)
         //  deadzone and low pass filtering
         if(abs(headAngleCentidegrees - previousHeadAngle) > global_deadzone)
         {
-            headAngle = (int32_t)((1. - global_filter_constant) * (double)previousHeadAngle) + (global_filter_constant * (double)(headAngleCentidegrees + previousHeadAngle)/2.);
-            previousHeadAngle = headAngle;
+            //cout<<"deadzone";
+            headAngleCentidegrees = (int32_t)(((1. - global_filter_constant) * (double)previousHeadAngle) + (global_filter_constant * (double)(headAngleCentidegrees + previousHeadAngle)/2.));
+            previousHeadAngle = headAngleCentidegrees;
         }
 
         //  convert headAngle into centidegrees and offset by 270 degrees
-        uint32_t hatPos = (27000 + headAngleCentidegrees) % 36000;
+        uint32_t hatPos = (27000 + previousHeadAngle) % 36000;
         padPosition.bHats = hatPos;
 
         //  send gamepad state to vJoy device
@@ -463,6 +464,11 @@ int main(int argc, char *argv[])
                 case 'a':
                     mtx.lock();
                     global_filter_constant = newThreshold;
+                    mtx.unlock();
+
+                case 'd':
+                    mtx.lock();
+                    global_deadzone = (uint32_t)newThreshold;
                     mtx.unlock();
             }
         }
