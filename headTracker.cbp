@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="headTracker" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/headTracker" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Debug/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-g" />
+				</Compiler>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/headTracker" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Release/" />
+				<Option type="0" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-O2" />
+					<Add option="-s" />
+				</Compiler>
+			</Target>
+			<Environment>
+				<Variable name="CV_VERSION" value="450" />
+			</Environment>
+		</Build>
+		<Compiler>
+			<Add directory="$(#cv.include)" />
+		</Compiler>
+		<Linker>
+			<Add library="libopencv_imgproc$(CV_VERSION).dll" />
+			<Add library="libopencv_core$(CV_VERSION).dll" />
+			<Add library="libopencv_highgui$(CV_VERSION).dll" />
+			<Add library="libopencv_imgcodecs$(CV_VERSION).dll" />
+			<Add library="libopencv_videoio$(CV_VERSION).dll" />
+			<Add library="libopencv_photo$(CV_VERSION).dll" />
+			<Add directory="$(#cv.lib)" />
+			<Add directory="$(#cv.bin)" />
+		</Linker>
+		<Unit filename="arnold_schwarzenegger.jpg" />
+		<Unit filename="main.cpp" />
+		<Extensions />
+	</Project>
+</CodeBlocks_project_file>
