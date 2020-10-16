@@ -75,7 +75,9 @@ int cvHandler()
 
     auto startTime = chrono::system_clock::now();
 
+    //  these 2 vectors have to persist between iterations
     vector<cv::Mat> rawFrames;
+    vector<cv::Point> targets;
     while (1)
     {
         //  capture an image and crop
@@ -110,8 +112,6 @@ int cvHandler()
             //  fastNlMeansDenoisingMulti( input array, output, index of image to filter, (n) images to process, filter strength, windowSize, searchWindowSize)
             //  NOTE: time complexity is O(searchWindowSize) + O(n)
             //  we are filtering the image at the middle of the vector, using all the images before and after
-
-            cout<<"denoise";
             cv::fastNlMeansDenoisingMulti(rawFrames, filteredFrame, frameVectorSize/2, frameVectorSize, 20, 7, 11);
         }
         else
@@ -143,27 +143,60 @@ int cvHandler()
         cv::threshold(newFrame, newFrame, upperThreshold, 255, 4);      //  all pixels with hue above the upper threshold are black
         cv::threshold(newFrame, newFrame, 1, 255, 0);                   //  remaining pixels become pure white
 
-        //  configure the blob detector
-        cv::SimpleBlobDetector::Params params;
-        params.filterByArea = true;
+//        //  configure the blob detector
+//        cv::SimpleBlobDetector::Params params;
+//        params.filterByArea = true;
+//
+//        // safely obtain the blob size from another thread using mutex
+//        mtx.lock();
+//        params.minArea = global_blob_size;
+//        mtx.unlock();
+//
+//        params.filterByInertia = false;
+//        params.filterByConvexity = false;
+//        params.filterByCircularity = false;
+//        params.filterByColor = false;
 
-        // safely obtain the blob size from another thread using mutex
-        mtx.lock();
-        params.minArea = global_blob_size;
-        mtx.unlock();
+        //  detect the contours
+        vector<vector<cv::Point>> contours;
+        cv::findContours(newFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_TC89_L1);
 
-        params.filterByInertia = false;
-        params.filterByConvexity = false;
-        params.filterByCircularity = false;
-        params.filterByColor = false;
+        // iterate over the list of contours to find the 2 biggest areas
+        vector<vector<cv::Point>> biggestContours;
+        if(contours.size() >= 2)
+        {
+            if(cv::contourArea(contours[0]) > cv::contourArea(contours[1]))
+            {
+                biggestContours.push_back(contours[0]);
+                biggestContours.push_back(contours[1]);
+            }
+            else
+            {
+                biggestContours.push_back(contours[1]);
+                biggestContours.push_back(contours[0]);
+            }
 
-        //  detect the blobs
-        vector<cv::KeyPoint> keypoints;
-        cv::Ptr<cv::SimpleBlobDetector> detector = cv::SimpleBlobDetector::create(params); // for some reason this is a pointer ¯\_(0_0)_/¯
-        detector->detect(newFrame, keypoints);
+            for(int i = 2; i < contours.size(); i++)
+            {
+                //  if the current contour is bigger than the one at the beginning of biggestContours (it's bigger than the biggest)
+                if(cv::contourArea(contours[i]) > cv::contourArea(biggestContours.front()))
+                {
+                    biggestContours.emplace(biggestContours.begin(), contours[i]);
+                    biggestContours.pop_back();
+                }
+                //  if the current contour is bigger than the one at the end of biggestContours (it's bigger than the 2nd biggest)
+                else if(cv::contourArea(contours[i]) > cv::contourArea(biggestContours.back()))
+                {
+                    biggestContours.emplace(biggestContours.begin() + 1, contours[i]);
+                    biggestContours.pop_back();
+                }
+            }
+        }
 
-        cv::Mat frameWithKeyPoints;
-        cv::drawKeypoints(newFrame, keypoints, frameWithKeyPoints, cv::Scalar(255, 0, 0), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+        //  generate a color image to draw the contour outlines
+        cv::Mat frameWithContours(newFrame.size(), CV_8UC3);
+        cv::cvtColor(newFrame, frameWithContours, cv::COLOR_GRAY2BGR);
+        cv::drawContours(frameWithContours, biggestContours, -1, cv::Scalar(255, 0, 0));
 
         //  draw a circle at mouse cursor
         cv::circle(hueFrame, mouseCoords, 5, cv::Scalar(255, 0, 0));
@@ -171,7 +204,7 @@ int cvHandler()
         // debugging text
         cout<<mouseCoords.x<<", "<<mouseCoords.y<<": ";
         cout<<upperThreshold<<"u "<<lowerThreshold<<"l ";
-        cout<<params.minArea<<"b ";
+        cout<<contours.size()<<"b ";
 
         //  display the current hue under the mouse cursor
         int cursorValue;
@@ -183,7 +216,7 @@ int cvHandler()
         cv::imshow("Filtered", filteredFrame);
         cv::imshow("Color", colorFrame);
         cv::imshow("Process", newFrame);
-        cv::imshow("Keypoints", frameWithKeyPoints);
+        cv::imshow("Keypoints", frameWithContours);
 
         auto timeNow = chrono::system_clock::now();
         auto frameDuration = chrono::duration_cast<chrono::milliseconds>(timeNow - startTime);
