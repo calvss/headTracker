@@ -1,3 +1,13 @@
+/*
+    Head tracking using webcam and colored blobs
+    Interface with Virtual Joystick
+
+    Created by Calvin Ng, October 2020
+    Released under MIT License
+
+    Uses OpenCV
+    License: https://opencv.org/license/
+*/
 #include<opencv2/opencv.hpp>
 #include<iostream>
 #include<vector>
