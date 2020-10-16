@@ -23,8 +23,9 @@
 using namespace std;
 
 mutex mtx;
-volatile int global_threshold_upper = 45;
-volatile int global_threshold_lower = 33;
+volatile int global_threshold_upper = 170;
+volatile int global_threshold_lower = 130;
+volatile int global_blob_size = 15;
 int global_frame_height;
 int global_frame_width;
 
@@ -75,11 +76,21 @@ int cvHandler()
 
     cout<<"resolution is: "<<global_frame_width<<" x "<<global_frame_height<<endl;
 
-    cv::namedWindow("Hue", cv::WINDOW_AUTOSIZE);
+    cv::namedWindow("Hue", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Hue", 320, 240);
     cv::setMouseCallback("Hue", mouse_callback, &coords);
-    cv::namedWindow("Saturation", cv::WINDOW_AUTOSIZE);
-    cv::namedWindow("Color", cv::WINDOW_AUTOSIZE);
-    cv::namedWindow("Process", cv::WINDOW_AUTOSIZE);
+
+    cv::namedWindow("Filtered", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Filtered", 320, 240);
+
+    cv::namedWindow("Color", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Color", 320, 240);
+
+    cv::namedWindow("Process", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Process", 320, 240);
+
+    cv::namedWindow("Keypoints", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Keypoints", 320, 240);
 
     auto startTime = chrono::system_clock::now();
 
@@ -158,15 +169,37 @@ int cvHandler()
             break;
         }
 
-    cout<<upperThreshold<<"u "<<lowerThreshold<<"l ";
+        cv::SimpleBlobDetector::Params params;
+        params.filterByArea = true;
 
-    auto timeNow = chrono::system_clock::now();
-    auto frameDuration = chrono::duration_cast<chrono::milliseconds>(timeNow - startTime);
-    int frameMs = frameDuration.count();
-    startTime = timeNow;
-    cout<<(1000./frameMs)<<" FPS"<<endl;
+        mtx.lock();
+        params.minArea = global_blob_size;
+        mtx.unlock();
 
-    //this_thread::sleep_for(100ms);
+        params.filterByInertia = false;
+        params.filterByConvexity = false;
+        params.filterByCircularity = false;
+        params.filterByColor = false;
+
+        vector<cv::KeyPoint> keypoints;
+        cv::Ptr<cv::SimpleBlobDetector> detector = cv::SimpleBlobDetector::create(params);
+        detector->detect(newFrame, keypoints);
+
+        cv::Mat frameWithKeyPoints;
+        cv::drawKeypoints(newFrame, keypoints, frameWithKeyPoints, cv::Scalar(255, 0, 0), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+
+        cv::imshow("Keypoints", frameWithKeyPoints);
+
+
+        cout<<upperThreshold<<"u "<<lowerThreshold<<"l ";
+
+        auto timeNow = chrono::system_clock::now();
+        auto frameDuration = chrono::duration_cast<chrono::milliseconds>(timeNow - startTime);
+        int frameMs = frameDuration.count();
+        startTime = timeNow;
+        cout<<(1000./frameMs)<<" FPS"<<endl;
+
+        //this_thread::sleep_for(100ms);
     }
     return 0;
 }
@@ -198,6 +231,12 @@ int main(int argc, char *argv[])
             mtx.unlock();
 
             cout <<"new threshold"<<newThreshold;
+        }
+        else if(type == 'b')
+        {
+            mtx.lock();
+            global_blob_size = newThreshold;
+            mtx.unlock();
         }
     }
     cout<<"done";
