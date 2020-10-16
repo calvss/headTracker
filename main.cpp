@@ -16,7 +16,13 @@
 #include<thread>
 #include<cmath>
 
+#include<windows.h>
+#include"public.h"
+#include"vjoyinterface.h"
+
+
 #define NUM_NOISE_FRAMES 11 // must be odd
+#define VJOYFPS 10
 
 using namespace std;
 
@@ -24,10 +30,13 @@ mutex mtx;
 volatile int global_threshold_upper = 170;
 volatile int global_threshold_lower = 130;
 volatile int global_blob_size = 15;
-volatile double global_filter_constant = 0.5;
+volatile double global_filter_constant = 0.3;
+volatile double global_head_angle = M_PI/2;
 volatile bool global_exit_flag = false;
+volatile bool global_statistics_flag = false;
 const int global_frame_height = 120;
 const int global_frame_width = 160;
+const uint32_t global_deadzone = 1000;
 
 void mouse_callback(int  event, int  x, int  y, int  flag, void *param)
 {
@@ -46,7 +55,7 @@ int cvHandler()
     cv::VideoCapture camera(0);
     if(!camera.isOpened())
     {
-        cerr << "ERROR: Could not open camera" << endl;
+        cerr<<"ERROR 01: Could not open camera"<< endl;
         return 1;
     }
 
@@ -180,11 +189,10 @@ int cvHandler()
                     biggestContours.pop_back();
                 }
             }
-            cout<<biggestContours.size()<<"size";
         }
         else
         {
-            cout<<"no contours";
+            cerr<<"no contours";
         }
 
         //  find the inscribed circles of the contours (https://stackoverflow.com/a/53648903/10835281)
@@ -234,6 +242,12 @@ int cvHandler()
         newAngle = ((1. - global_filter_constant) * previousAngle) + (global_filter_constant * (newAngle + previousAngle)/2);
         previousAngle = newAngle;
 
+        if(mtx.try_lock())
+        {
+            global_head_angle = newAngle;
+            mtx.unlock();
+        }
+
         //  generate a color image to draw the contour outlines
         cv::Mat frameWithContours(newFrame.size(), CV_8UC3); //  uint8, 3 channels
         cv::cvtColor(newFrame, frameWithContours, cv::COLOR_GRAY2BGR);
@@ -251,16 +265,6 @@ int cvHandler()
         //  draw a circle at mouse cursor
         cv::circle(hueFrame, mouseCoords, 5, cv::Scalar(255, 0, 0));
 
-        // debugging text
-        cout<<mouseCoords.x<<", "<<mouseCoords.y<<": ";
-        cout<<upperThreshold<<"u "<<lowerThreshold<<"l ";
-        cout<<contours.size()<<"b ";
-
-        //  display the current hue under the mouse cursor
-        int cursorValue;
-        cursorValue = (int)hueFrame.at<uchar>(mouseCoords);
-        cout<<cursorValue<<", ";
-
         //  preview windows
         cv::imshow("Hue", hueFrame);
         cv::imshow("Filtered", filteredFrame);
@@ -272,7 +276,21 @@ int cvHandler()
         auto frameDuration = chrono::duration_cast<chrono::milliseconds>(timeNow - startTime);
         int frameMs = frameDuration.count();
         startTime = timeNow;
-        cout<<(1000./frameMs)<<" FPS"<<endl;
+
+        if(global_statistics_flag)
+        {
+            // debugging text
+            cout<<mouseCoords.x<<", "<<mouseCoords.y<<": ";
+            cout<<upperThreshold<<"u "<<lowerThreshold<<"l ";
+            cout<<contours.size()<<"b ";
+
+            //  display the current hue under the mouse cursor
+            int cursorValue;
+            cursorValue = (int)hueFrame.at<uchar>(mouseCoords);
+            cout<<cursorValue<<", ";
+
+            cout<<(1000./frameMs)<<" FPS"<<endl;
+        }
 
         // wait (5ms) for a key to be pressed (exit)
         if (cv::waitKey(5) >= 0)
@@ -283,9 +301,129 @@ int cvHandler()
     return 0;
 }
 
+int vJoyHandler(unsigned int deviceID = 1)
+{
+
+//Testing if VJoy Driver is installed******************************************
+    if(vJoyEnabled())
+    {
+        cout<<"VJD Enabled"<<endl;
+        cout<<"Vendor: "<<static_cast<char *> (GetvJoyManufacturerString())<<endl;
+        cout<<"Product: "<<static_cast<char *> (GetvJoyProductString())<<endl;
+        cout<<"Version Number: "<<static_cast<char *> (GetvJoySerialNumberString())<<endl;
+    }
+    else
+    {
+        cerr<<"ERROR 02: No vJoyStick driver enabled"<<endl;
+        return 1;
+    }
+
+//Testing if VJoy Driver is same version with DLL******************************
+    unsigned short VerDll, VerDrv;
+    if (DriverMatch(&VerDll, &VerDrv))
+    {
+        cout<<"vJoy Driver ("<<VerDrv<<") matches vJoy DLL ("<<VerDll<<"). OK!"<<endl;
+    }
+    else
+    {
+        cerr<<"WARN: vJoy Driver ("<<VerDrv<<") does not match vJoy DLL ("<<VerDll<<"). Continuing."<<endl;
+    }
+
+//Checking virtual device status***********************************************
+    VjdStat status = GetVJDStatus(deviceID);
+
+	switch (status)
+	{
+	case VJD_STAT_OWN:
+		cout<<"vJoy device "<<deviceID<<" is already owned by this feeder."<<endl;
+		break;
+	case VJD_STAT_FREE:
+		cout<<"vJoy device "<<deviceID<<" is free."<<endl;
+		break;
+	case VJD_STAT_BUSY:
+		cerr<<"ERROR 03: vJoy device "<<deviceID<<" is already owned by another feeder.\nCannot continue."<<endl;
+		return -3;
+	case VJD_STAT_MISS:
+		cerr<<"ERROR 04: vJoy device "<<deviceID<<" is not installed or disabled.\nCannot continue."<<endl;
+		return -4;
+	default:
+		cerr<<"ERROR 05: vJoy device "<<deviceID<<" general error.\nCannot continue."<<endl;
+		return -1;
+	};
+
+//Acquire VJoy Device**********************************************************
+    if (AcquireVJD(deviceID))
+    {
+        cout<<"Successfully acquired device number "<<deviceID<<endl;
+    }
+    else
+    {
+        cerr<<"ERROR 06: Failed to acquire device number "<<deviceID<<endl;
+        return -1;
+    }
+
+//Main Loop********************************************************************
+    JOYSTICK_POSITION_V2 padPosition;
+    int32_t previousHeadAngle = 0;
+    while(!global_exit_flag)
+    {
+        auto loopStartTime = chrono::system_clock::now();
+
+        //  POV hat position is an integer from 0 to 35999 (inclusive), set the value to 0xFFFFFFF for neutral
+        //  represents the angle in centidegrees, with 0 at straight forward
+        //  head angle is in radians with 0 at pure left
+
+        mtx.lock();
+        double headAngle = global_head_angle;
+        mtx.unlock();
+
+        int32_t headAngleCentidegrees = (int32_t)(headAngle * 18000./M_PI);
+
+        //  deadzone and low pass filtering
+        if(abs(headAngleCentidegrees - previousHeadAngle) > global_deadzone)
+        {
+            headAngle = (int32_t)((1. - global_filter_constant) * (double)previousHeadAngle) + (global_filter_constant * (double)(headAngleCentidegrees + previousHeadAngle)/2.);
+            previousHeadAngle = headAngle;
+        }
+
+        //  convert headAngle into centidegrees and offset by 270 degrees
+        uint32_t hatPos = (27000 + headAngleCentidegrees) % 36000;
+        padPosition.bHats = hatPos;
+
+        //  send gamepad state to vJoy device
+        if(!UpdateVJD(deviceID, &padPosition))
+		{
+			cerr<<"ERROR 07: Feeding vJoy device number "<<deviceID<<" failed - try to enable device then press enter"<<endl;
+			cin.get();
+			if (AcquireVJD(deviceID))
+            {
+                cout<<"Successfully acquired device number "<<deviceID<<endl;
+            }
+            else
+            {
+                cerr<<"ERROR 06: Failed to acquire device number "<<deviceID<<endl;
+                return -1;
+            }
+		}
+
+		//  limit fps
+		std::this_thread::sleep_until(loopStartTime + chrono::milliseconds((int)(1000/VJOYFPS)));
+    }
+
+    RelinquishVJD(deviceID);
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
-    thread cvThread(cvHandler);
+    unsigned int deviceID = 1;
+    if(argc > 1)
+    {
+        deviceID = atoi(argv[1]);
+    }
+
+    std::thread cvThread = std::thread(cvHandler);
+    std::thread vJoyThread = std::thread(vJoyHandler, deviceID);
 
     char type;
     double newThreshold;
@@ -297,6 +435,10 @@ int main(int argc, char *argv[])
         if(type == 'q')
         {
             global_exit_flag = true;
+        }
+        else if(type == 's')
+        {
+            global_statistics_flag = !global_statistics_flag;
         }
         else
         {
@@ -326,6 +468,7 @@ int main(int argc, char *argv[])
         }
     }
     cvThread.join();
+    vJoyThread.join();
     cout<<"done";
     return 0;
 }

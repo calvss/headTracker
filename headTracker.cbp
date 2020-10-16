@@ -39,11 +39,15 @@
 			<Add library="libopencv_imgcodecs$(CV_VERSION).dll" />
 			<Add library="libopencv_videoio$(CV_VERSION).dll" />
 			<Add library="libopencv_photo$(CV_VERSION).dll" />
+			<Add library="libopencv_features2d$(CV_VERSION).dll" />
+			<Add library="D:/GitHub/headTracker/vJoyInterface.dll" />
 			<Add directory="$(#cv.lib)" />
 			<Add directory="$(#cv.bin)" />
 		</Linker>
-		<Unit filename="arnold_schwarzenegger.jpg" />
 		<Unit filename="main.cpp" />
+		<Unit filename="public.h" />
+		<Unit filename="vJoyInterface.dll" />
+		<Unit filename="vjoyinterface.h" />
 		<Extensions />
 	</Project>
 </CodeBlocks_project_file>
