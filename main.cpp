@@ -22,21 +22,23 @@
 
 
 #define NUM_NOISE_FRAMES 5 // must be odd
-#define VJOYFPS 10
 
 using namespace std;
 
 mutex mtx;
+volatile int global_deadzone = 500;
+volatile int global_vjoy_fps = 30;
 volatile int global_threshold_upper = 170;
 volatile int global_threshold_lower = 130;
 volatile int global_blob_size = 15;
+volatile int global_angle_offset = 0;
 volatile double global_filter_constant = 0.6;
 volatile double global_head_angle = M_PI/2;
+volatile double global_angle_sensitivity = 1.0;
 volatile bool global_exit_flag = false;
 volatile bool global_statistics_flag = false;
-const int global_frame_height = 240;
-const int global_frame_width = 320;
-volatile uint32_t global_deadzone = 500;
+const int global_const_frame_height = 240;
+const int global_const_frame_width = 320;
 
 void mouse_callback(int  event, int  x, int  y, int  flag, void *param)
 {
@@ -59,10 +61,10 @@ int cvHandler()
         return 1;
     }
 
-    camera.set(cv::CAP_PROP_FRAME_WIDTH, global_frame_width);
-    camera.set(cv::CAP_PROP_FRAME_HEIGHT, global_frame_height);
+    camera.set(cv::CAP_PROP_FRAME_WIDTH, global_const_frame_width);
+    camera.set(cv::CAP_PROP_FRAME_HEIGHT, global_const_frame_height);
 
-    cout<<"resolution is: "<<global_frame_width<<" x "<<global_frame_height<<endl;
+    cout<<"resolution is: "<<global_const_frame_width<<" x "<<global_const_frame_height<<endl;
 
 
     //preview windows
@@ -90,12 +92,17 @@ int cvHandler()
     //  angle of the centroid connecting line in radians, where 0 is pure left
     double previousAngle = M_PI/2;
 
-    while(!global_exit_flag)
+    bool exitLoop = false;
+    while(!exitLoop)
     {
+        mtx.lock();
+        exitLoop = global_exit_flag;
+        mtx.unlock();
+
         //  capture an image and crop
         cv::Mat colorFrame;
         camera>>colorFrame;
-        cv::Rect cropRect(0, global_frame_height/2, global_frame_width, global_frame_height/2);
+        cv::Rect cropRect(0, global_const_frame_height/2, global_const_frame_width, global_const_frame_height/2);
         colorFrame = colorFrame(cropRect);
 
         //  split into hue, saturation, value
@@ -238,15 +245,16 @@ int cvHandler()
         //  calculate the angle of the centroid connecting line
         double newAngle = atan2(centroid1.y - centroid2.y, centroid1.x - centroid2.x);
 
+        mtx.lock();
+        double filterConstant = global_filter_constant;
+        mtx.unlock();
         //  low pass filter
-        newAngle = ((1. - global_filter_constant) * previousAngle) + (global_filter_constant * (newAngle + previousAngle)/2);
+        newAngle = ((1. - filterConstant) * previousAngle) + (filterConstant * (newAngle + previousAngle)/2);
         previousAngle = newAngle;
 
-        if(mtx.try_lock())
-        {
-            global_head_angle = newAngle;
-            mtx.unlock();
-        }
+        mtx.lock();
+        global_head_angle = newAngle;
+        mtx.unlock();
 
         //  generate a color image to draw the contour outlines
         cv::Mat frameWithContours(newFrame.size(), CV_8UC3); //  uint8, 3 channels
@@ -268,7 +276,7 @@ int cvHandler()
         //  preview windows
         cv::imshow("Hue", hueFrame);
         cv::imshow("Filtered", filteredFrame);
-        cv::imshow("Color", mask1);
+        cv::imshow("Color", colorFrame);
         cv::imshow("Process", newFrame);
         cv::imshow("Keypoints", frameWithContours);
 
@@ -277,7 +285,11 @@ int cvHandler()
         int frameMs = frameDuration.count();
         startTime = timeNow;
 
-        if(global_statistics_flag)
+        mtx.lock();
+        bool printStatistics = global_statistics_flag;
+        mtx.unlock();
+
+        if(printStatistics)
         {
             // debugging text
             cout<<mouseCoords.x<<", "<<mouseCoords.y<<": ";
@@ -293,9 +305,11 @@ int cvHandler()
         }
 
         // wait (5ms) for a key to be pressed (exit)
-        if (cv::waitKey(5) >= 0)
+        if (cv::waitKey(1) >= 0)
         {
+            mtx.lock();
             global_exit_flag = true;
+            mtx.unlock();
         }
     }
     return 0;
@@ -365,30 +379,36 @@ int vJoyHandler(unsigned int deviceID = 1)
 //Main Loop********************************************************************
     JOYSTICK_POSITION_V2 padPosition;
     int32_t previousHeadAngle = 0;
-    while(!global_exit_flag)
+    bool exitLoop = false;
+    while(!exitLoop)
     {
         auto loopStartTime = chrono::system_clock::now();
+
+        mtx.lock();
+        exitLoop = global_exit_flag;
+        double headAngle = global_head_angle;
+        double filterConstant = global_filter_constant;
+        double angleSensitivity = global_angle_sensitivity;
+        int vjoyFPS = global_vjoy_fps;
+        int deadzone = global_deadzone;
+        int angleOffset = global_angle_offset;
+        mtx.unlock();
 
         //  POV hat position is an integer from 0 to 35999 (inclusive), set the value to 0xFFFFFFF for neutral
         //  represents the angle in centidegrees, with 0 at straight forward
         //  head angle is in radians with 0 at pure left
 
-        mtx.lock();
-        double headAngle = global_head_angle;
-        mtx.unlock();
-
         int32_t headAngleCentidegrees = (int32_t)(headAngle * 18000./M_PI);
 
         //  deadzone and low pass filtering
-        if(abs(headAngleCentidegrees - previousHeadAngle) > global_deadzone)
+        if(abs(headAngleCentidegrees - previousHeadAngle) > deadzone)
         {
-            //cout<<"deadzone";
-            headAngleCentidegrees = (int32_t)(((1. - global_filter_constant) * (double)previousHeadAngle) + (global_filter_constant * (double)(headAngleCentidegrees + previousHeadAngle)/2.));
+            headAngleCentidegrees = (int32_t)(((1. - filterConstant) * (double)previousHeadAngle) + (filterConstant * (double)(headAngleCentidegrees + previousHeadAngle)/2.));
             previousHeadAngle = headAngleCentidegrees;
         }
 
         //  convert headAngle into centidegrees and offset by 270 degrees
-        uint32_t hatPos = (27000 + previousHeadAngle) % 36000;
+        uint32_t hatPos = (27000 + (uint32_t)previousHeadAngle) % 36000;
         padPosition.bHats = hatPos;
 
         //  send gamepad state to vJoy device
@@ -408,10 +428,11 @@ int vJoyHandler(unsigned int deviceID = 1)
 		}
 
 		//  limit fps
-		std::this_thread::sleep_until(loopStartTime + chrono::milliseconds((int)(1000/VJOYFPS)));
+		std::this_thread::sleep_until(loopStartTime + chrono::milliseconds((int)(1000/vjoyFPS)));
     }
 
     RelinquishVJD(deviceID);
+    std::terminate();
     return 0;
 }
 
@@ -429,17 +450,42 @@ int main(int argc, char *argv[])
     char type;
     double newThreshold;
 
-    while(!global_exit_flag)
+    bool exitLoop = false;
+    while(!exitLoop)
     {
+        mtx.lock();
+        exitLoop = global_exit_flag;
+        mtx.unlock();
+
         cin>>type;
 
         if(type == 'q')
         {
+            mtx.lock();
             global_exit_flag = true;
+            mtx.unlock();
         }
         else if(type == 's')
         {
+            mtx.lock();
             global_statistics_flag = !global_statistics_flag;
+            mtx.unlock();
+        }
+        else if(type == 'h')
+        {
+            cout<<"Help:"<<endl;
+            cout<<"Command syntax: [abdfhloqsuv] [<value>]"<<endl;
+            cout<<"h: help"<<endl;
+            cout<<"q: quit"<<endl;
+            cout<<"s: toggle statistics"<<endl;
+            cout<<"u    [int]: upper threshold"<<endl;
+            cout<<"l    [int]: lower threshold"<<endl;
+            cout<<"b    [int]: blob size"<<endl;
+            cout<<"a [double]: low-pass filter constant"<<endl;
+            cout<<"d    [int]: deadzone in centidegrees"<<endl;
+            cout<<"f    [int]: vJoy controller update rate"<<endl;
+            cout<<"v    [int]: sensitivity"<<endl;
+            cout<<"o    [int]: offset"<<endl;
         }
         else
         {
@@ -450,26 +496,49 @@ int main(int argc, char *argv[])
                     mtx.lock();
                     global_threshold_upper = (int) newThreshold;
                     mtx.unlock();
+                    break;
 
                 case 'l':
                     mtx.lock();
                     global_threshold_lower = (int) newThreshold;
                     mtx.unlock();
+                    break;
 
                 case 'b':
                     mtx.lock();
                     global_blob_size = (int) newThreshold;
                     mtx.unlock();
+                    break;
 
                 case 'a':
                     mtx.lock();
                     global_filter_constant = newThreshold;
                     mtx.unlock();
+                    break;
 
                 case 'd':
                     mtx.lock();
-                    global_deadzone = (uint32_t)newThreshold;
+                    global_deadzone = (int) newThreshold;
                     mtx.unlock();
+                    break;
+
+                case 'f':
+                    mtx.lock();
+                    global_vjoy_fps = (int) newThreshold;
+                    mtx.unlock();
+                    break;
+
+                case 'v':
+                    mtx.lock();
+                    global_angle_sensitivity = newThreshold;
+                    mtx.unlock();
+                    break;
+
+                case 'o':
+                    mtx.lock();
+                    global_angle_offset = (int) newThreshold;
+                    mtx.unlock();
+                    break;
             }
         }
     }
