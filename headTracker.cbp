@@ -49,6 +49,7 @@
 			<Add library="liblibpng" />
 			<Add library="liblibjasper" />
 			<Add library="libuuid" />
+			<Add library="lib/vJoyInterface.lib" />
 			<Add directory="$(#cv.lib)" />
 			<Add directory="$(#cv.bin)" />
 			<Add directory="D:/GitHub/opencv/build/install/x64/mingw/staticlib" />
