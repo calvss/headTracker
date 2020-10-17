@@ -165,11 +165,11 @@ int cvHandler()
 
         //  morphology based filtering
         cv::Mat se1 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(7, 7));
-        // cv::Mat se2 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(5, 5));
+        cv::Mat se2 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(5, 5));
         // cv::Mat se3 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(1, 1));
         cv::Mat cleanFrame;
-        cv::morphologyEx(newFrame, cleanFrame, cv::MorphTypes::MORPH_CLOSE, se1);
-        //cv::morphologyEx(cleanFrame, cleanFrame, cv::MorphTypes::MORPH_OPEN, se2);
+        cv::morphologyEx(newFrame, cleanFrame, cv::MorphTypes::MORPH_OPEN, se2); //  opening eliminates small dots
+        cv::morphologyEx(cleanFrame, cleanFrame, cv::MorphTypes::MORPH_CLOSE, se1);  //  closing eliminates small holes
 
         //  detect the contours
         vector<vector<cv::Point>> contours;
