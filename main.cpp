@@ -36,7 +36,7 @@ volatile double global_filter_constant = 0.6;
 volatile double global_head_angle = M_PI/2;
 volatile double global_angle_sensitivity = 1.0;
 volatile bool global_exit_flag = false;
-volatile bool global_statistics_flag = false;
+volatile bool global_statistics_flag = true;
 const int global_const_frame_height = 240;
 const int global_const_frame_width = 320;
 
@@ -162,6 +162,13 @@ int cvHandler()
         cv::threshold(newFrame, newFrame, upperThreshold, 255, 4);      //  all pixels with hue above the upper threshold are black
         cv::threshold(newFrame, newFrame, 1, 255, 0);                   //  remaining pixels become pure white
 
+        //  morphology based filtering
+        cv::Mat se1 = getStructuringElement(cv::MorphShapes::MORPH_RECT, cv::Size(7, 7));
+        cv::Mat se2 = getStructuringElement(cv::MorphShapes::MORPH_RECT, cv::Size(3, 3));
+        cv::Mat mask;
+        cv::morphologyEx(newFrame, mask, cv::MorphTypes::MORPH_CLOSE, se1);
+        cv::morphologyEx(mask, mask, cv::MorphTypes::MORPH_OPEN, se2);
+
         //  detect the contours
         vector<vector<cv::Point>> contours;
         cv::findContours(newFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_NONE);
@@ -277,7 +284,7 @@ int cvHandler()
         cv::imshow("Hue", hueFrame);
         cv::imshow("Filtered", filteredFrame);
         cv::imshow("Color", colorFrame);
-        cv::imshow("Process", newFrame);
+        cv::imshow("Process", mask);
         cv::imshow("Keypoints", frameWithContours);
 
         auto timeNow = chrono::system_clock::now();
@@ -379,6 +386,7 @@ int vJoyHandler(unsigned int deviceID = 1)
 //Main Loop********************************************************************
     JOYSTICK_POSITION_V2 padPosition;
     int32_t previousHeadAngle = 0;
+    int32_t headAngleSetpoint = 0;
     bool exitLoop = false;
     while(!exitLoop)
     {
@@ -396,18 +404,23 @@ int vJoyHandler(unsigned int deviceID = 1)
 
         //  POV hat position is an integer from 0 to 35999 (inclusive), set the value to 0xFFFFFFF for neutral
         //  represents the angle in centidegrees, with 0 at straight forward
-        //  head angle is in radians with 0 at pure left
+        //  headAngle is in radians with 0 at pure left
 
         int32_t headAngleCentidegrees = (int32_t)(headAngle * 18000./M_PI);
+        headAngleCentidegrees = headAngleCentidegrees + angleOffset;
+        int32_t headAngleFromForward = headAngleCentidegrees - 9000;
+        headAngleFromForward = (int32_t)(headAngleFromForward * angleSensitivity);
+        headAngleCentidegrees = headAngleFromForward + 9000;
 
-        //  deadzone and low pass filtering
-        if(abs(headAngleCentidegrees - previousHeadAngle) > deadzone)
+        if(abs(headAngleCentidegrees - headAngleSetpoint) > deadzone)
         {
-            headAngleCentidegrees = (int32_t)(((1. - filterConstant) * (double)previousHeadAngle) + (filterConstant * (double)(headAngleCentidegrees + previousHeadAngle)/2.));
-            previousHeadAngle = headAngleCentidegrees;
+            headAngleSetpoint = headAngleCentidegrees;
         }
 
-        //  convert headAngle into centidegrees and offset by 270 degrees
+        //  low-pass filtering
+        previousHeadAngle = (int32_t)(((1. - filterConstant) * (double)previousHeadAngle) + (filterConstant * (double)(headAngleSetpoint + previousHeadAngle)/2.));
+
+        //  convert headAngle into centidegrees and rotate by 270 degrees
         uint32_t hatPos = (27000 + (uint32_t)previousHeadAngle) % 36000;
         padPosition.bHats = hatPos;
 
