@@ -34,20 +34,27 @@
 			<Add directory="$(#cv.include)" />
 		</Compiler>
 		<Linker>
-			<Add library="libopencv_imgproc$(CV_VERSION).dll" />
-			<Add library="libopencv_core$(CV_VERSION).dll" />
-			<Add library="libopencv_highgui$(CV_VERSION).dll" />
-			<Add library="libopencv_imgcodecs$(CV_VERSION).dll" />
-			<Add library="libopencv_videoio$(CV_VERSION).dll" />
-			<Add library="libopencv_photo$(CV_VERSION).dll" />
-			<Add library="libopencv_features2d$(CV_VERSION).dll" />
-			<Add library="D:/GitHub/headTracker/vJoyInterface.dll" />
+			<Add library="libopencv_highgui$(CV_VERSION)" />
+			<Add library="libopencv_videoio$(CV_VERSION)" />
+			<Add library="libopencv_imgcodecs$(CV_VERSION)" />
+			<Add library="libopencv_photo$(CV_VERSION)" />
+			<Add library="libopencv_imgproc$(CV_VERSION)" />
+			<Add library="libopencv_core$(CV_VERSION)" />
+			<Add library="zlib" />
+			<Add library="gdi32" />
+			<Add library="ole32" />
+			<Add library="oleaut32" />
+			<Add library="comdlg32" />
+			<Add library="liblibjpeg-turbo" />
+			<Add library="liblibpng" />
+			<Add library="liblibjasper" />
+			<Add library="libuuid" />
 			<Add directory="$(#cv.lib)" />
 			<Add directory="$(#cv.bin)" />
+			<Add directory="D:/GitHub/opencv/build/install/x64/mingw/staticlib" />
 		</Linker>
 		<Unit filename="main.cpp" />
 		<Unit filename="public.h" />
-		<Unit filename="vJoyInterface.dll" />
 		<Unit filename="vjoyinterface.h" />
 		<Extensions />
 	</Project>
