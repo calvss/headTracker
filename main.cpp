@@ -21,16 +21,16 @@
 #include"vjoyinterface.h"
 
 
-#define NUM_NOISE_FRAMES 5 // must be odd
+#define NUM_NOISE_FRAMES 3 // must be odd
 
 using namespace std;
 
 mutex mtx;
 volatile int global_deadzone = 500;
 volatile int global_vjoy_fps = 30;
+volatile int global_cv_fps = 15;
 volatile int global_threshold_upper = 170;
 volatile int global_threshold_lower = 130;
-volatile int global_blob_size = 15;
 volatile int global_angle_offset = 0;
 volatile double global_filter_constant = 0.6;
 volatile double global_head_angle = M_PI/2;
@@ -95,6 +95,7 @@ int cvHandler()
     bool exitLoop = false;
     while(!exitLoop)
     {
+        auto loopStartTime = chrono::system_clock::now();
         mtx.lock();
         exitLoop = global_exit_flag;
         mtx.unlock();
@@ -131,7 +132,7 @@ int cvHandler()
             //  fastNlMeansDenoisingMulti( input array, output, index of image to filter, (n) images to process, filter strength, windowSize, searchWindowSize)
             //  NOTE: time complexity is O(searchWindowSize) + O(n)
             //  we are filtering the image at the middle of the vector, using all the images before and after
-            cv::fastNlMeansDenoisingMulti(rawFrames, filteredFrame, frameVectorSize/2, frameVectorSize, 20, 7, 11);
+            cv::fastNlMeansDenoisingMulti(rawFrames, filteredFrame, frameVectorSize/2, frameVectorSize, 20, 5, 7);
         }
         else
         {
@@ -163,15 +164,16 @@ int cvHandler()
         cv::threshold(newFrame, newFrame, 1, 255, 0);                   //  remaining pixels become pure white
 
         //  morphology based filtering
-        cv::Mat se1 = getStructuringElement(cv::MorphShapes::MORPH_RECT, cv::Size(7, 7));
-        cv::Mat se2 = getStructuringElement(cv::MorphShapes::MORPH_RECT, cv::Size(3, 3));
-        cv::Mat mask;
-        cv::morphologyEx(newFrame, mask, cv::MorphTypes::MORPH_CLOSE, se1);
-        cv::morphologyEx(mask, mask, cv::MorphTypes::MORPH_OPEN, se2);
+        cv::Mat se1 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(7, 7));
+        // cv::Mat se2 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(5, 5));
+        // cv::Mat se3 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(1, 1));
+        cv::Mat cleanFrame;
+        cv::morphologyEx(newFrame, cleanFrame, cv::MorphTypes::MORPH_CLOSE, se1);
+        //cv::morphologyEx(cleanFrame, cleanFrame, cv::MorphTypes::MORPH_OPEN, se2);
 
         //  detect the contours
         vector<vector<cv::Point>> contours;
-        cv::findContours(newFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_NONE);
+        cv::findContours(cleanFrame, contours, cv::RetrievalModes::RETR_EXTERNAL, cv::ContourApproximationModes::CHAIN_APPROX_NONE);
 
         // iterate over the list of contours to find the 2 biggest areas
         vector<vector<cv::Point>> biggestContours;
@@ -206,33 +208,9 @@ int cvHandler()
         }
         else
         {
-            cerr<<"no contours";
+            cerr<<"WARN: no contours";
+            continue;
         }
-
-        //  find the inscribed circles of the contours (https://stackoverflow.com/a/53648903/10835281)
-        //      1. generate filled contour masks
-        cv::Mat mask1(newFrame.size(), CV_8UC1, cv::Scalar(0)); //  uint8, 1 channel, image full of zeroes (black)
-        cv::drawContours(mask1, biggestContours, 0, cv::Scalar(255), cv::FILLED);
-
-        cv::Mat mask2(newFrame.size(), CV_8UC1, cv::Scalar(0)); //  uint8, 1 channel, image full of zeroes (black)
-        cv::drawContours(mask2, biggestContours, 1, cv::Scalar(255), cv::FILLED);
-
-        //      2. distance transforms
-        cv::Mat dt1;
-        cv::distanceTransform(mask1, dt1, cv::DIST_L2, 5, cv::DIST_LABEL_PIXEL);
-
-        cv::Mat dt2;
-        cv::distanceTransform(mask2, dt2, cv::DIST_L2, 5, cv::DIST_LABEL_PIXEL);
-
-        //      3. max values of the distance transform
-        //          the inscribed circle is at the position of max_loc with radius max_val
-        double max_val1;
-        cv::Point max_loc1;
-        cv::minMaxLoc(dt1, nullptr, &max_val1, nullptr, &max_loc1);
-
-        double max_val2;
-        cv::Point max_loc2;
-        cv::minMaxLoc(dt2, nullptr, &max_val2, nullptr, &max_loc2);
 
         //  compute the centroids using image moments
         cv::Moments moment1 = cv::moments(biggestContours[0]);
@@ -264,13 +242,9 @@ int cvHandler()
         mtx.unlock();
 
         //  generate a color image to draw the contour outlines
-        cv::Mat frameWithContours(newFrame.size(), CV_8UC3); //  uint8, 3 channels
-        cv::cvtColor(newFrame, frameWithContours, cv::COLOR_GRAY2BGR);
+        cv::Mat frameWithContours(cleanFrame.size(), CV_8UC3); //  uint8, 3 channels
+        cv::cvtColor(cleanFrame, frameWithContours, cv::COLOR_GRAY2BGR);
         cv::drawContours(frameWithContours, biggestContours, -1, cv::Scalar(255, 0, 0));
-
-        //  draw the inscribed circles
-        cv::circle(frameWithContours, max_loc1, max_val1, cv::Scalar(0, 255, 0));
-        cv::circle(frameWithContours, max_loc2, max_val2, cv::Scalar(0, 0, 255));
 
         //  draw the line connecting the centroids
         cv::line(frameWithContours, centroid1, centroid2, cv::Scalar(255, 255, 255));
@@ -284,7 +258,7 @@ int cvHandler()
         cv::imshow("Hue", hueFrame);
         cv::imshow("Filtered", filteredFrame);
         cv::imshow("Color", colorFrame);
-        cv::imshow("Process", mask);
+        cv::imshow("Process", newFrame);
         cv::imshow("Keypoints", frameWithContours);
 
         auto timeNow = chrono::system_clock::now();
@@ -318,6 +292,12 @@ int cvHandler()
             global_exit_flag = true;
             mtx.unlock();
         }
+
+        //  limit fps
+        mtx.lock();
+		int cvFPS = global_cv_fps;
+		mtx.unlock();
+		std::this_thread::sleep_until(loopStartTime + chrono::milliseconds((int)(1000/cvFPS)));
     }
     return 0;
 }
@@ -487,13 +467,12 @@ int main(int argc, char *argv[])
         else if(type == 'h')
         {
             cout<<"Help:"<<endl;
-            cout<<"Command syntax: [abdfhloqsuv] [<value>]"<<endl;
+            cout<<"Command syntax: [acdfhloqsuv] [<value>]"<<endl;
             cout<<"h: help"<<endl;
             cout<<"q: quit"<<endl;
             cout<<"s: toggle statistics"<<endl;
             cout<<"u    [int]: upper threshold"<<endl;
             cout<<"l    [int]: lower threshold"<<endl;
-            cout<<"b    [int]: blob size"<<endl;
             cout<<"a [double]: low-pass filter constant"<<endl;
             cout<<"d    [int]: deadzone in centidegrees"<<endl;
             cout<<"f    [int]: vJoy controller update rate"<<endl;
@@ -514,12 +493,6 @@ int main(int argc, char *argv[])
                 case 'l':
                     mtx.lock();
                     global_threshold_lower = (int) newThreshold;
-                    mtx.unlock();
-                    break;
-
-                case 'b':
-                    mtx.lock();
-                    global_blob_size = (int) newThreshold;
                     mtx.unlock();
                     break;
 
@@ -550,6 +523,12 @@ int main(int argc, char *argv[])
                 case 'o':
                     mtx.lock();
                     global_angle_offset = (int) newThreshold;
+                    mtx.unlock();
+                    break;
+
+                case 'c':
+                    mtx.lock();
+                    global_cv_fps = (int) newThreshold;
                     mtx.unlock();
                     break;
             }
