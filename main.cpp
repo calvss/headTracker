@@ -26,17 +26,20 @@
 using namespace std;
 
 mutex mtx;
-volatile int global_deadzone = 500;
-volatile int global_vjoy_fps = 30;
-volatile int global_cv_fps = 15;
+volatile int global_deadzone = 100;                 //  centidegrees
+volatile int global_vjoy_fps = 60;
+volatile int global_cv_fps = 24;
 volatile int global_threshold_upper = 170;
 volatile int global_threshold_lower = 130;
-volatile int global_angle_offset = 0;
-volatile double global_filter_constant = 0.6;
-volatile double global_head_angle = M_PI/2;
-volatile double global_angle_sensitivity = 1.0;
+volatile int global_angle_offset = -500;               //  centidegrees
+volatile double global_filter_constant = 0.3;
+volatile double global_head_angle = M_PI/2;         //  radians
+volatile double global_angle_sensitivity = 0.2;
+volatile double global_kp = 0.9;
+volatile double global_ki = 0.1;
+volatile double global_kd = 2.0;
 volatile bool global_exit_flag = false;
-volatile bool global_statistics_flag = true;
+volatile bool global_statistics_flag = false;
 const int global_const_frame_height = 240;
 const int global_const_frame_width = 320;
 
@@ -208,7 +211,7 @@ int cvHandler()
         }
         else
         {
-            cerr<<"WARN: no contours";
+            cerr<<"WARN: no contours"<<endl;
             continue;
         }
 
@@ -365,8 +368,10 @@ int vJoyHandler(unsigned int deviceID = 1)
 
 //Main Loop********************************************************************
     JOYSTICK_POSITION_V2 padPosition;
-    int32_t previousHeadAngle = 0;
-    int32_t headAngleSetpoint = 0;
+    int32_t previousHeadAngle = 9000;
+    int32_t headAngleSetpoint = 9000;
+    int64_t errorIntegral = 0;
+    int32_t previousError = 0;
     bool exitLoop = false;
     while(!exitLoop)
     {
@@ -377,6 +382,9 @@ int vJoyHandler(unsigned int deviceID = 1)
         double headAngle = global_head_angle;
         double filterConstant = global_filter_constant;
         double angleSensitivity = global_angle_sensitivity;
+        double kP = global_kp;
+        double kI = global_ki;
+        double kD = global_kd;
         int vjoyFPS = global_vjoy_fps;
         int deadzone = global_deadzone;
         int angleOffset = global_angle_offset;
@@ -385,23 +393,30 @@ int vJoyHandler(unsigned int deviceID = 1)
         //  POV hat position is an integer from 0 to 35999 (inclusive), set the value to 0xFFFFFFF for neutral
         //  represents the angle in centidegrees, with 0 at straight forward
         //  headAngle is in radians with 0 at pure left
+        //  headAngleSetpoint, previousHeadAngle is in centidegrees with 0 at pure left
 
-        int32_t headAngleCentidegrees = (int32_t)(headAngle * 18000./M_PI);
-        headAngleCentidegrees = headAngleCentidegrees + angleOffset;
-        int32_t headAngleFromForward = headAngleCentidegrees - 9000;
+        headAngleSetpoint = (int32_t)(headAngle * 18000./M_PI);
+        headAngleSetpoint = headAngleSetpoint + angleOffset;
+
+        //  gotta rotate the hand angle before changing sensitivity
+        int32_t headAngleFromForward = headAngleSetpoint - 9000;
         headAngleFromForward = (int32_t)(headAngleFromForward * angleSensitivity);
-        headAngleCentidegrees = headAngleFromForward + 9000;
+        headAngleSetpoint = headAngleFromForward + 9000;
 
-        if(abs(headAngleCentidegrees - headAngleSetpoint) > deadzone)
-        {
-            headAngleSetpoint = headAngleCentidegrees;
-        }
+        int32_t error = headAngleSetpoint - previousHeadAngle;
+        int32_t errorDerivative = error - previousError;
+        errorIntegral += error;
+
+
+        headAngleSetpoint = (int32_t)(error * kP) + (int32_t)(errorIntegral * kI) + (int32_t)(errorDerivative * kD);
 
         //  low-pass filtering
         previousHeadAngle = (int32_t)(((1. - filterConstant) * (double)previousHeadAngle) + (filterConstant * (double)(headAngleSetpoint + previousHeadAngle)/2.));
 
-        //  convert headAngle into centidegrees and rotate by 270 degrees
-        uint32_t hatPos = (27000 + (uint32_t)previousHeadAngle) % 36000;
+        previousError = error;
+
+        //  convert headAngle into centidegrees and rotate by 90 degrees
+        uint32_t hatPos = (35900 - (((uint32_t)previousHeadAngle) + 9000)) % 35900;
         padPosition.bHats = hatPos;
 
         //  send gamepad state to vJoy device
@@ -467,17 +482,21 @@ int main(int argc, char *argv[])
         else if(type == 'h')
         {
             cout<<"Help:"<<endl;
-            cout<<"Command syntax: [acdfhloqsuv] [<value>]"<<endl;
+            cout<<"Command syntax: [acfhloqsuvzpid] [<value>]"<<endl;
             cout<<"h: help"<<endl;
             cout<<"q: quit"<<endl;
             cout<<"s: toggle statistics"<<endl;
             cout<<"u    [int]: upper threshold"<<endl;
             cout<<"l    [int]: lower threshold"<<endl;
             cout<<"a [double]: low-pass filter constant"<<endl;
-            cout<<"d    [int]: deadzone in centidegrees"<<endl;
+            cout<<"z    [int]: deadzone in centidegrees"<<endl;
             cout<<"f    [int]: vJoy controller update rate"<<endl;
             cout<<"v    [int]: sensitivity"<<endl;
             cout<<"o    [int]: offset"<<endl;
+            cout<<"c    [int]: computer vision framerate"<<endl;
+            cout<<"p [double]: PID controller kP"<<endl;
+            cout<<"i [double]: PID controller kI"<<endl;
+            cout<<"d [double]: PID controller kD"<<endl;
         }
         else
         {
@@ -502,7 +521,7 @@ int main(int argc, char *argv[])
                     mtx.unlock();
                     break;
 
-                case 'd':
+                case 'z':
                     mtx.lock();
                     global_deadzone = (int) newThreshold;
                     mtx.unlock();
@@ -529,6 +548,24 @@ int main(int argc, char *argv[])
                 case 'c':
                     mtx.lock();
                     global_cv_fps = (int) newThreshold;
+                    mtx.unlock();
+                    break;
+
+                case 'p':
+                    mtx.lock();
+                    global_kp = newThreshold;
+                    mtx.unlock();
+                    break;
+
+                case 'i':
+                    mtx.lock();
+                    global_ki = newThreshold;
+                    mtx.unlock();
+                    break;
+
+                case 'd':
+                    mtx.lock();
+                    global_kd = newThreshold;
                     mtx.unlock();
                     break;
             }
