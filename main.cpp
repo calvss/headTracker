@@ -21,7 +21,7 @@
 #include"vjoyinterface.h"
 
 
-#define NUM_NOISE_FRAMES 3 // must be odd
+#define NUM_NOISE_FRAMES 1 // must be odd
 
 using namespace std;
 

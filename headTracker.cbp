@@ -52,7 +52,7 @@
 			<Add library="lib/vJoyInterface.lib" />
 			<Add directory="$(#cv.lib)" />
 			<Add directory="$(#cv.bin)" />
-			<Add directory="D:/GitHub/opencv/build/install/x64/mingw/staticlib" />
+			<Add directory="$(#cv.obj)" />
 		</Linker>
 		<Unit filename="main.cpp" />
 		<Unit filename="public.h" />
