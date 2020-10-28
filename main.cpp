@@ -9,6 +9,7 @@
     License: https://opencv.org/license/
 */
 #include<opencv2/opencv.hpp>
+#include <opencv2/core/ocl.hpp>
 #include<iostream>
 #include<vector>
 #include<mutex>
@@ -21,7 +22,7 @@
 #include"vjoyinterface.h"
 
 
-#define NUM_NOISE_FRAMES 1 // must be odd
+#define NUM_NOISE_FRAMES 3 // must be odd
 
 using namespace std;
 
@@ -40,7 +41,7 @@ volatile double global_ki = 0.1;
 volatile double global_kd = 2.0;
 volatile bool global_exit_flag = false;
 volatile bool global_statistics_flag = false;
-const int global_const_frame_height = 240;
+const int global_const_frame_height = 180;
 const int global_const_frame_width = 320;
 
 void mouse_callback(int  event, int  x, int  y, int  flag, void *param)
@@ -55,6 +56,8 @@ void mouse_callback(int  event, int  x, int  y, int  flag, void *param)
 
 int cvHandler()
 {
+    cv::ocl::setUseOpenCL(true);
+
     cv::Point mouseCoords(0,0);
 
     cv::VideoCapture camera(0);
@@ -90,7 +93,8 @@ int cvHandler()
     auto startTime = chrono::system_clock::now();
 
     //  this vector has to persist between iterations
-    vector<cv::Mat> rawFrames;
+    vector<cv::UMat> rawFrames;
+    cv::UMat filteredFrame;
 
     //  angle of the centroid connecting line in radians, where 0 is pure left
     double previousAngle = M_PI/2;
@@ -104,14 +108,14 @@ int cvHandler()
         mtx.unlock();
 
         //  capture an image and crop
-        cv::Mat colorFrame;
+        cv::UMat colorFrame;
         camera>>colorFrame;
         cv::Rect cropRect(0, global_const_frame_height/2, global_const_frame_width, global_const_frame_height/2);
         colorFrame = colorFrame(cropRect);
 
         //  split into hue, saturation, value
-        cv::Mat hsvFrame, hueFrame, saturationFrame, valueFrame;
-        vector<cv::Mat> hsvChannels;
+        cv::UMat hsvFrame, hueFrame, saturationFrame, valueFrame;
+        vector<cv::UMat> hsvChannels;
 
         cv::cvtColor(colorFrame, hsvFrame, cv::COLOR_BGR2HSV);
         cv::split(hsvFrame, hsvChannels);
@@ -129,7 +133,6 @@ int cvHandler()
         rawFrames.emplace(rawFrames.begin(), hueFrame.clone());
 
         //  conditionally apply denoising, only if there's enough images in the vector, else just use the latest image
-        cv::Mat filteredFrame;
         if(frameVectorSize >= 3 && frameVectorSize%2 != 0)
         {
             //  fastNlMeansDenoisingMulti( input array, output, index of image to filter, (n) images to process, filter strength, windowSize, searchWindowSize)
@@ -161,7 +164,7 @@ int cvHandler()
         upperThreshold = global_threshold_upper;
         mtx.unlock();
 
-        cv::Mat newFrame;
+        cv::UMat newFrame;
         cv::threshold(filteredFrame, newFrame, lowerThreshold, 255, 3); //  all pixels with hue below the lower threshold are black
         cv::threshold(newFrame, newFrame, upperThreshold, 255, 4);      //  all pixels with hue above the upper threshold are black
         cv::threshold(newFrame, newFrame, 1, 255, 0);                   //  remaining pixels become pure white
@@ -169,8 +172,8 @@ int cvHandler()
         //  morphology based filtering
         cv::Mat se1 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(7, 7));
         cv::Mat se2 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(5, 5));
-        // cv::Mat se3 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(1, 1));
-        cv::Mat cleanFrame;
+        // cv::UMat se3 = getStructuringElement(cv::MorphShapes::MORPH_ELLIPSE, cv::Size(1, 1));
+        cv::UMat cleanFrame;
         cv::morphologyEx(newFrame, cleanFrame, cv::MorphTypes::MORPH_OPEN, se2); //  opening eliminates small dots
         cv::morphologyEx(cleanFrame, cleanFrame, cv::MorphTypes::MORPH_CLOSE, se1);  //  closing eliminates small holes
 
@@ -245,7 +248,7 @@ int cvHandler()
         mtx.unlock();
 
         //  generate a color image to draw the contour outlines
-        cv::Mat frameWithContours(cleanFrame.size(), CV_8UC3); //  uint8, 3 channels
+        cv::UMat frameWithContours(cleanFrame.size(), CV_8UC3); //  uint8, 3 channels
         cv::cvtColor(cleanFrame, frameWithContours, cv::COLOR_GRAY2BGR);
         cv::drawContours(frameWithContours, biggestContours, -1, cv::Scalar(255, 0, 0));
 
@@ -282,7 +285,7 @@ int cvHandler()
 
             //  display the current hue under the mouse cursor
             int cursorValue;
-            cursorValue = (int)hueFrame.at<uchar>(mouseCoords);
+            cursorValue = (int)hueFrame.getMat(cv::ACCESS_READ).at<uchar>(mouseCoords);
             cout<<cursorValue<<", ";
 
             cout<<(1000./frameMs)<<" FPS"<<endl;
