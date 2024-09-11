@@ -4,7 +4,7 @@ A computer vision based head tracker using virtual joystick.
 
 This program uses your computer webcam to track the angle of your head by detecting two colored squares attached to your headset.  
 
-Attach one square to a spot near the ear, and another square to a mic arm. The program will calculate the parallax change to determine the angle of the two squares. The program will then use a threshold of the hues of the camera to determine which spots are the colored squares.  
+Attach one square to a spot near the ear, and another square to a mic arm. The program will then use a threshold of the hues of the camera to determine which spots are the colored squares. The program will calculate the parallax change to determine the angle of the two squares. 
 
 POV Hat #1 on virtual joystick device 1 will be controlled by the program.  
 
